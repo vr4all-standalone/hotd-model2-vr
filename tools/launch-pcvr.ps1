@@ -17,7 +17,10 @@ try{
  $env:HOTD_MODEL2_SETTINGS=Join-Path $taskData 'settings.ini'
  $env:HOTD_MODEL2_XR_LOG=Join-Path $taskData 'hotd-model2-xr.log'
  $taskArgs=@('hotdo','-rompath',$taskRoms,'-video','none','-sound','auto','-skip_gameinfo','-noreadconfig')
- foreach($taskPair in @(@('nvram_directory','nvram'),@('cfg_directory','cfg'),@('diff_directory','diff'),@('state_directory','state'),@('snapshot_directory','snap'))){$taskArgs+=@('-'+$taskPair[0],(Join-Path $taskData $taskPair[1]))}
+ foreach($taskPair in @(@('nvram_directory','nvram'),@('cfg_directory','cfg'),@('diff_directory','diff'),@('state_directory','state'),@('snapshot_directory','snap'))){
+  $taskArgs += "-$($taskPair[0])"
+  $taskArgs += (Join-Path $taskData $taskPair[1])
+ }
  & (Join-Path $taskRoot 'hotd_model2.exe') @taskArgs
  if($LASTEXITCODE){throw "HOTD PCVR exited with code $LASTEXITCODE"}
 }finally{Pop-Location}

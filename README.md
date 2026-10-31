@@ -9,7 +9,7 @@
 ![Quest 3 / 3S and Windows OpenXR](https://img.shields.io/badge/Platforms-Quest_3_%2F_3S_%C2%B7_PC_VR_OpenXR-blue?style=for-the-badge)
 ![Original game required](https://img.shields.io/badge/Your_Game-HOTD_original_revision-orange?style=for-the-badge)
 
-**[Download the Quest APK, Windows OpenXR build, source and checksums](https://github.com/vr4all-standalone/hotd-model2-vr/releases/tag/v0.1.7-beta)**
+**[Download the Quest APK](https://github.com/vr4all-standalone/hotd-model2-vr/releases/tag/v0.1.7-beta)** · **[Download the PCVR launcher hotfix](https://github.com/vr4all-standalone/hotd-model2-vr/releases/tag/v0.1.7-pcvr.1)**
 
 **[🌐 VR4ALL — Standalone VR Mod Installer](https://github.com/vr4all-standalone/vr4all-standalone)**  
 **[☕ Donate to VR4ALL](https://ko-fi.com/vr4all)**
