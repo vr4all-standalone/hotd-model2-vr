@@ -1,0 +1,7 @@
+/build/
+/private/
+/research/
+/engine/
+__pycache__/
+*.pyc
+/android/local.properties

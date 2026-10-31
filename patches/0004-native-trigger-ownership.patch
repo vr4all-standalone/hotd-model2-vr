@@ -1,0 +1,26 @@
+--- a/src/mame/sega/model2.cpp
++++ b/src/mame/sega/model2.cpp
+@@ -164,15 +164,20 @@
+     if (hotd_model2::vr_requested() && !strcmp(machine().system().name, "hotdo")) {
+         hotd_model2::native_shot_events().attach();
+         for (unsigned player=0;player<2;++player) {
++            // Freeze ownership when the native shot routine consumes its
++            // cached trigger byte, before a vblank or later IO can change it.
++            const u32 trigger=0x51ef08+player*0x1c;
++            m_maincpu->space(AS_PROGRAM).install_read_tap(trigger,trigger+3,"hotd-shot-candidate",
++                [this](offs_t offset,u32 &data,u32 mask) {
++                    hotd_model2::native_shot_events().candidate(m_maincpu->state_int(I960_IP),offset,data,mask);
++                });
+             const u32 address=0x51ec08+player*0xcc;
+             m_maincpu->space(AS_PROGRAM).install_write_tap(address,address+3,"hotd-committed-shot",
+                 [this](offs_t offset,u32 &data,u32 mask) {
+                     const u32 ip=m_maincpu->state_int(I960_IP);
+                     if (ip!=0x5c40 || mask!=0xffffffffU || !(data&2)) return;
+                     const auto state=hotd_model2::read_game_state([&](uint32_t a){return m_maincpu->space(AS_PROGRAM).read_dword(a);});
+-                    const auto input=hotd_model2::cabinet_input();
+-                    const unsigned player=offset==0x51ec08?0:1;
+-                    hotd_model2::native_shot_events().observe(state,ip,offset,data,mask,input.feedback_epoch[player]);
++                    hotd_model2::native_shot_events().observe(state,ip,offset,data,mask);
+                 });
+         }
+     }

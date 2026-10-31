@@ -1,0 +1,737 @@
+--- a/makefile
++++ b/makefile
+@@ -1197,7 +1197,7 @@
+ #-------------------------------------------------
+ 
+ $(PROJECTDIR_SDL)/$(MAKETYPE)-android-arm64/Makefile: makefile $(SCRIPTS) $(GENIE)
+-	$(SILENT) $(GENIE) $(PARAMS) --gcc=android-arm64 --gcc_version=$(CLANG_VERSION) --osd=sdl --targetos=android --PLATFORM=arm64 --NOASM=1 $(MAKETYPE)
++	$(SILENT) $(GENIE) $(PARAMS) --gcc=android-arm64 --gcc_version=$(CLANG_VERSION) --osd=sdl --targetos=android --PLATFORM=arm64 --NOASM=0 $(MAKETYPE)
+ 
+ .PHONY: android-arm64
+ android-arm64: android-ndk generate $(PROJECTDIR_SDL)/$(MAKETYPE)-android-arm64/Makefile
+--- a/scripts/src/osd/sdl.lua
++++ b/scripts/src/osd/sdl.lua
+@@ -265,9 +265,14 @@
+ 				"/usr/openwin/lib",
+ 			}
+ 		end
+-		local str = backtick(sdlconfigcmd() .. " --libs")
+-		addlibfromstring(str)
+-		addoptionsfromstring(str)
++		if _OPTIONS["targetos"]=="android" then
++			libdirs { path.join(_OPTIONS["SDL_INSTALL_ROOT"], "lib") }
++			links { "SDL2" }
++		else
++			local str = backtick(sdlconfigcmd() .. " --libs")
++			addlibfromstring(str)
++			addoptionsfromstring(str)
++		end
+ 
+ 		if _OPTIONS["targetos"]~="haiku" and _OPTIONS["targetos"]~="android" then
+ 			links {
+--- a/scripts/src/osd/sdl_cfg.lua
++++ b/scripts/src/osd/sdl_cfg.lua
+@@ -109,7 +109,7 @@
+ 		end
+ 	elseif _OPTIONS["targetos"]=="android" then
+ 		buildoptions {
+-			backtick(sdlconfigcmd() .. " --cflags | sed 's:/SDL2::'"),
++			"-I" .. path.join(_OPTIONS["SDL_INSTALL_ROOT"], "include"),
+ 		}
+ 	else
+ 		buildoptions {
+--- a/scripts/src/osd/windows.lua
++++ b/scripts/src/osd/windows.lua
+@@ -42,6 +42,7 @@
+ 		"comctl32",
+ 		"comdlg32",
+ 		"dinput8",
++		"ksuser",
+ 		"ole32",
+ 		"psapi",
+ 		"shcore",
+--- a/src/devices/cpu/i960/i960.cpp
++++ b/src/devices/cpu/i960/i960.cpp
+@@ -1,6 +1,7 @@
+ // license:BSD-3-Clause
+ // copyright-holders:Farfetch'd, R. Belmont
+ #include "emu.h"
++#include "hotd_model2/native_timing.h"
+ #include "i960.h"
+ #include "i960dis.h"
+ 
+@@ -2205,6 +2206,7 @@
+ 
+ void i960_cpu_device::execute_run()
+ {
++    hotd_model2::NativeTimingScope native_timing(hotd_model2::NativeSection::I960);
+ 	uint32_t opcode;
+ 
+ 	// delay checking irqs if we are in burst stall mode
+--- a/src/devices/cpu/m68000/m68000.cpp
++++ b/src/devices/cpu/m68000/m68000.cpp
+@@ -2,6 +2,7 @@
+ // copyright-holders:Olivier Galibert
+ 
+ #include "emu.h"
++#include "hotd_model2/native_timing.h"
+ #include "m68000.h"
+ #include "m68kdasm.h"
+ 
+@@ -146,6 +147,7 @@
+ 
+ void m68000_device::execute_run()
+ {
++    hotd_model2::NativeTimingScope native_timing(hotd_model2::NativeSection::SoundCPU);
+ 	m_icount -= m_count_before_instruction_step;
+ 	if(m_icount < 0) {
+ 		m_count_before_instruction_step = -m_icount;
+--- a/src/devices/cpu/mb86233/mb86233.cpp
++++ b/src/devices/cpu/mb86233/mb86233.cpp
+@@ -2,6 +2,7 @@
+ // copyright-holders:Olivier Galibert
+ 
+ #include "emu.h"
++#include "hotd_model2/native_timing.h"
+ #include "mb86233.h"
+ #include "mb86233d.h"
+ 
+@@ -725,6 +726,7 @@
+ 
+ void mb86233_device::execute_run()
+ {
++    hotd_model2::NativeTimingScope native_timing(hotd_model2::NativeSection::GeometryDSP);
+ 	while(m_icount > 0) {
+ 		m_ppc = m_pc;
+ 		debugger_instruction_hook(m_ppc);
+--- a/src/devices/sound/scsp.cpp
++++ b/src/devices/sound/scsp.cpp
+@@ -32,6 +32,7 @@
+ 
+ // TODO : Envelope/LFO times are based on 44100Hz case?
+ #include "emu.h"
++#include "hotd_model2/native_timing.h"
+ #include "scsp.h"
+ 
+ #include <algorithm>
+@@ -327,6 +328,7 @@
+ 
+ void scsp_device::sound_stream_update(sound_stream &stream)
+ {
++    hotd_model2::NativeTimingScope native_timing(hotd_model2::NativeSection::SCSP);
+ 	DoMasterSamples(stream);
+ 
+ 	// MSLC     |  CA   |SGC|EG
+--- a/src/emu/video.cpp
++++ b/src/emu/video.cpp
+@@ -26,11 +26,29 @@
+ #include "xmlfile.h"
+ 
+ #include "osdepend.h"
++#include "hotd_model2/realtime_pacer.h"
+ 
+ #include "rendersw.hxx"
+ 
+ #include <bit>
+ #include <cstdio>
++#include <chrono>
++#include <cstdlib>
++#include <thread>
++
++namespace {
++bool vr_deadline_pacing_enabled()
++{
++	static const bool enabled = std::getenv("HOTD_MODEL2_VR") && !std::getenv("HOTD_MODEL2_LEGACY_PACING");
++	return enabled;
++}
++
++hotd_model2::RealtimePacer &vr_deadline_pacer()
++{
++	static thread_local hotd_model2::RealtimePacer pacer;
++	return pacer;
++}
++}
+ 
+ 
+ //**************************************************************************
+@@ -236,6 +254,8 @@
+ 
+ 	// if we're throttling, synchronize before rendering
+ 	attotime current_time = machine().time();
++	if (vr_deadline_pacing_enabled() && !effective_throttle())
++		vr_deadline_pacer().reset();
+ 	if (!from_debugger && phase > machine_phase::INIT && !m_low_latency && effective_throttle())
+ 		update_throttle(current_time);
+ 
+@@ -662,6 +682,30 @@
+ 
+ void video_manager::update_throttle(attotime emutime)
+ {
++	if (vr_deadline_pacing_enabled())
++	{
++		auto &vr_pacer = vr_deadline_pacer();
++		if (machine().paused() || m_speed <= 0 || m_throttle_rate <= 0)
++			vr_pacer.reset();
++		else
++		{
++			// Model 2 renders expensive 3D updates between cheaper native
++			// refreshes. Keep their cumulative deadline rather than discarding
++			// each overrun, which needlessly starves real-time audio playback.
++			using clock = std::chrono::steady_clock;
++			auto now = clock::now();
++			double wall = std::chrono::duration<double>(now.time_since_epoch()).count();
++			double wait = vr_pacer.wait_seconds(emutime.as_double(), wall, (m_speed / 1000.0) * m_throttle_rate);
++			if (wait > 0)
++			{
++				auto deadline = now + std::chrono::duration_cast<clock::duration>(std::chrono::duration<double>(wait));
++				bool const allowed_to_sleep = machine().options().sleep() && (!effective_autoframeskip() || effective_frameskip() == 0);
++				if (allowed_to_sleep) std::this_thread::sleep_until(deadline);
++				else while (clock::now() < deadline) { }
++			}
++			return;
++		}
++	}
+ /*
+ 
+    Throttling theory:
+--- a/src/mame/sega/model2.cpp
++++ b/src/mame/sega/model2.cpp
+@@ -71,6 +71,7 @@
+ 
+ #include "emu.h"
+ #include "model2.h"
++#include "../../lib/hotd_model2/host_bridge.h"
+ 
+ #include "315_5296.h"
+ #include "315_5649.h"
+@@ -1098,6 +1099,7 @@
+ 
+ u8 model2_state::lightgun_data_r(offs_t offset)
+ {
++    if(hotd_model2::vr_requested())return hotd_model2::lightgun_byte(offset);
+ 	u16 data = m_lightgun_ports[offset >> 1].read_safe(0);
+ 	return BIT(offset, 0) ? (data >> 8) : data;
+ }
+@@ -1118,6 +1120,7 @@
+ // handles offscreen gun trigger detection here
+ u8 model2_state::lightgun_offscreen_r(offs_t offset)
+ {
++    if(hotd_model2::vr_requested())return hotd_model2::offscreen_input(offset,0xff);
+ 	// 5 percent border size
+ 	const float BORDER_SIZE = 0.05f;
+ 
+@@ -1568,7 +1571,7 @@
+ 
+ u8 model2_state::in0_r()
+ {
+-	u8 data = m_in0->read();
++	u8 data = hotd_model2::system_input(m_in0->read());
+ 
+ 	if (m_ctrlmode)
+ 		return (0xc0) | (m_eeprom->do_read() << 5) | (0x10) | (data & 0x0f);
+@@ -2422,6 +2425,14 @@
+ 	if (!state)
+ 		return;
+ 
++    hotd_model2::native_tick([&](uint32_t address){return m_maincpu->space(AS_PROGRAM).read_dword(address);},m_videocontrol);
++    if(hotd_model2::vr_requested()) {
++        const auto* poly=reinterpret_cast<const uint32_t*>(memregion("polygons")->base());
++        const auto* tex=reinterpret_cast<const uint16_t*>(memregion("textures")->base());
++        hotd_model2::native_weapons([&](uint32_t address){return m_maincpu->space(AS_PROGRAM).read_dword(address);},
++            [&](uint32_t index){return poly[index];},[&](uint32_t index){return tex[index];},
++            memregion("polygons")->bytes()/4,memregion("textures")->bytes()/2);
++    }
+ 	m_framenum = m_screen->frame_number();
+ 
+ 	// if 60 Hz mode or frame number is even, trigger geometrizer to start new frame
+@@ -2789,6 +2800,7 @@
+ 	sega_315_5649_device &io(*subdevice<sega_315_5649_device>("io"));
+ 	io.serial_ch2_rd_callback().set(FUNC(model2a_state::lightgun_mux_r));
+ 	io.serial_ch2_wr_callback().set(FUNC(model2a_state::lightgun_mux_w));
++
+ }
+ 
+ void model2a_state::skytargt(machine_config &config)
+@@ -3065,6 +3077,7 @@
+ 	sega_315_5649_device &io(*subdevice<sega_315_5649_device>("io"));
+ 	io.serial_ch2_rd_callback().set(FUNC(model2c_state::lightgun_mux_r));
+ 	io.serial_ch2_wr_callback().set(FUNC(model2c_state::lightgun_mux_w));
++    io.in_pc_callback().set([this](){return hotd_model2::trigger_input(ioport("IN1")->read());});
+ }
+ 
+ void model2c_state::model2c_5881(machine_config &config)
+--- a/src/mame/sega/model2_v.cpp
++++ b/src/mame/sega/model2_v.cpp
+@@ -89,8 +89,12 @@
+ *********************************************************************************************************************************/
+ 
+ #include "emu.h"
++#include "hotd_model2/native_timing.h"
++#include "hotd_model2/native_clip.h"
+ #include "model2.h"
+ #include "model2rd.ipp"
++#include "../../lib/hotd_model2/model2_trace.h"
++#include "../../lib/hotd_model2/model2_live.h"
+ 
+ #include "corefloat.h"
+ 
+@@ -451,24 +455,33 @@
+ 	}
+ 
+ 	raster->polygon_z = zvalue;
++    if (hotd_model2::trace_active() || hotd_model2::live_active()) {
++        hotd_model2::NativePolygon native;
++        native.count=NumVerts;native.attr=attr;native.window=raster->cur_window;
++        native.sort=float_to_zval(zvalue,raster->z_adjust);native.luma=object.luma;
++        native.lod=object.texlod;native.culled=cull;native.object=hotd_model2::trace_object();
++        native.cull_reasons=hotd_model2::CullKnown;
++        if(((attr>>17)&1)==0 && (raster->command_buffer[9]&0x00800000))native.cull_reasons|=hotd_model2::CullBackface;
++        if(((attr>>8)&3)==0)native.cull_reasons|=hotd_model2::CullNonRendering;
++        if(raster->master_z_clip!=0xff && int32_t(1.0/min_z)>raster->master_z_clip)native.cull_reasons|=hotd_model2::CullDepthLimit;
++        if(max_z<0)native.cull_reasons|=hotd_model2::CullBehind;
++        native.focus={m_geo->focus.x,m_geo->focus.y};
++        native.center={float(raster->center[raster->center_sel][0]),float(raster->center[raster->center_sel][1])};
++        for(unsigned i=0;i<4;i++){native.header[i]=object.texheader[i];native.viewport[i]=raster->viewport[i];}
++        for(unsigned i=0;i<12;i++)native.matrix[i]=m_geo->matrix[i];
++        for(unsigned i=0;i<NumVerts;i++){const auto& v=object.v[i];native.vertices[i]={v.x,v.y,v.p[0],v.p[1],v.p[2]};}
++        if(hotd_model2::trace_active())hotd_model2::trace_capture().append(native);
++        if(hotd_model2::live_active())hotd_model2::live_capture().append(native);
++    }
+ 
+ 	if (cull == false)
+ 	{
+-		int32_t clipped_verts;
+-		poly_vertex verts_in[8], verts_out[8];
+-
+-		for (int i = 0; i < NumVerts; i++)
+-			verts_in[i] = object.v[i];
+-
+-		clipped_verts = NumVerts;
+-
+-		/* do clipping */
+-		for (int i = 0; i < 4; i++)
+-		{
+-			clipped_verts = clip_polygon(verts_in, clipped_verts, verts_out, raster->clip_plane[raster->center_sel][i]);
+-			for (int j = 0; j < clipped_verts; j++)
+-				verts_in[j] = verts_out[j];
+-		}
++		poly_vertex verts_out[8];
++		// Preserve the original four-plane clipper for every mixed case. A
++		// wholly accepted polygon only needs the same final vertex copies.
++		static const bool fast_clip = std::getenv("HOTD_MODEL2_NO_CLIP_FASTPATH") == nullptr;
++		const int32_t clipped_verts = hotd_model2::clip_polygon_frustum<NumVerts>(
++			object.v, verts_out, raster->clip_plane[raster->center_sel], dot_product, clip_polygon, fast_clip);
+ 
+ 		if (clipped_verts > 2)
+ 		{
+@@ -666,6 +679,17 @@
+ /* 3D Rasterizer frame start: Resets frame variables */
+ void model2_state::render_frame_start()
+ {
++    if (std::string_view(machine().system().name) == "hotdo") {
++        hotd_model2::trace_begin(m_screen->frame_number(), machine().time().as_double());
++        hotd_model2::live_begin(m_screen->frame_number(), machine().time().as_double());
++        // Latch the camera with the submitted geometry, before the vblank IRQ
++        // advances the game's camera animation for the next frame.
++        if (hotd_model2::trace_active() || hotd_model2::live_active()) {
++            const auto zoom=hotd_model2::read_native_camera_zoom([&](uint32_t address){return m_maincpu->space(AS_PROGRAM).read_dword(address);});
++            if (hotd_model2::trace_active()) hotd_model2::trace_capture().camera_zoom(zoom.fov,zoom.reference_fov);
++            if (hotd_model2::live_active()) hotd_model2::live_capture().camera_zoom(zoom.fov,zoom.reference_fov);
++        }
++    }
+ 	raster_state *raster = m_raster.get();
+ 
+ 	/* reset the polygon list index */
+@@ -1719,6 +1743,7 @@
+ 	u32  tha = *input++;     /* Texture Header Address */
+ 	u32  oba = *input++;     /* Object Address */
+ 	u32  obc = *input++;     /* Object Count */
++	if(hotd_model2::trace_active()||hotd_model2::live_active())hotd_model2::trace_object()=oba;
+ 
+ 	u32 *obp;                /* Object Pointer */
+ 
+@@ -1771,6 +1796,7 @@
+ /* Command 02: Direct Data */
+ u32 *model2_state::geo_direct_data(geo_state *geo, u32 opcode, u32 *input)
+ {
++    if(hotd_model2::trace_active()||hotd_model2::live_active())hotd_model2::trace_object()=0xffffffff;
+ 	raster_state *raster = geo->raster;
+ 	u32  tpa = *input++;     /* Texture Point Address */
+ 	u32  tha = *input++;     /* Texture Header Address */
+@@ -2326,6 +2352,7 @@
+ 
+ void model2_state::geo_parse()
+ {
++    hotd_model2::NativeTimingScope native_timing(hotd_model2::NativeSection::GeometryParse);
+ 	u32  address = (m_geo_read_start_address & 0x1ffff)/4;
+ 	u32 *input = &m_bufferram[address];
+ 	u32  opcode;
+@@ -2356,6 +2383,11 @@
+ 		/* process it */
+ 		input = geo_process_command(m_geo.get(), opcode, input, &end_code);
+ 	}
++    if(hotd_model2::live_active()){hotd_model2::live_pending()=true;hotd_model2::live_active()=false;}
++    if(hotd_model2::trace_active()) {
++        hotd_model2::trace_geometry_pending()=true;
++        hotd_model2::trace_active()=false;
++    }
+ }
+ 
+ /***********************************************************************************************/
+@@ -2406,9 +2438,12 @@
+ 
+ u32 model2_state::screen_update(screen_device &screen, bitmap_rgb32 &bitmap, const rectangle &cliprect)
+ {
++    hotd_model2::NativeTimingScope native_timing(hotd_model2::NativeSection::ScreenUpdate);
++    const uint16_t* window_mask_override=nullptr; // No HOTD native mask override verified.
+ 	// if the scroll color table was written to, we need to refresh the palette
+ 	if (m_palette_dirty)
+ 	{
++        hotd_model2::NativeTimingScope palette_timing(hotd_model2::NativeSection::PaletteUpdate);
+ 		for (int i = 0; i < 0x1000; i++)
+ 		{
+ 			u16 palcolor = m_palram[i];
+@@ -2422,31 +2457,104 @@
+ 		}
+ 	}
+ 
++    {hotd_model2::NativeTimingScope background_timing(hotd_model2::NativeSection::BackgroundTiles);
+ 	//logerror("--- frame ---\n");
+ 	bitmap.fill(m_palette->pen(0), cliprect);
+ 	m_sys24_bitmap.fill(0, cliprect);
+ 
+ 	// draw tilemap B as opaque
+ 	for (int layer = 3; layer >= 2; layer--)
+-		m_tiles->draw(screen, m_sys24_bitmap, cliprect, layer << 1, 0, TILEMAP_DRAW_OPAQUE);
++		m_tiles->draw_with_window_mask(screen, m_sys24_bitmap, cliprect, layer << 1, 0, TILEMAP_DRAW_OPAQUE, window_mask_override);
+ 
+ 	for (int layer = 1; layer >= 0; layer--)
+-		m_tiles->draw(screen, m_sys24_bitmap, cliprect, layer << 1, 0, 0);
++		m_tiles->draw_with_window_mask(screen, m_sys24_bitmap, cliprect, layer << 1, 0, 0, window_mask_override);
+ 
+ 	copybitmap_trans(bitmap, m_sys24_bitmap, 0, 0, 0, 0, cliprect, 0);
+-
++    }
++
++    if(hotd_model2::trace_geometry_pending()) {
++        // Freeze resources at the actual native draw, after vblank IRQ writes.
++        // Raw pre-clipping polygons have been retained since geo_parse.
++        try {
++            auto& capture=hotd_model2::trace_capture();
++            capture.display(m_crtc_xoffset,m_crtc_yoffset,m_screen->visible_area().width(),m_screen->visible_area().height());
++            capture.bytes("texture0",&m_textureram0[0],m_textureram0.bytes());
++            capture.bytes("texture1",&m_textureram1[0],m_textureram1.bytes());
++            capture.bytes("palette",m_palram.get(),0x4000);
++            capture.bytes("colorxlat",m_colorxlat.get(),0xc000);
++            capture.bytes("luma",m_lumaram.get(),0x8000);
++            capture.bytes("gamma",m_gamma_table,sizeof(m_gamma_table));
++            capture.bytes("workram",&m_workram[0],m_workram.bytes());
++            hotd_model2::write_trace(*capture.finish(),std::getenv("HOTD_MODEL2_SCENE_DIR"));
++        } catch(const std::exception& error){osd_printf_error("HOTD_MODEL2 capture failed: %s\n",error.what());}
++        hotd_model2::trace_geometry_pending()=false;
++    }
++    if(!hotd_model2::trace_pending_raster().empty()) {
++        try {hotd_model2::trace_raster("background",m_screen->visible_area().width(),m_screen->visible_area().height(),[&](int x,int y){return uint32_t(bitmap.pix(y,x));});}
++        catch(const std::exception& error){osd_printf_error("HOTD_MODEL2 capture failed: %s\n",error.what());}
++    }
++    if(hotd_model2::live_pending()) {
++        auto& capture=hotd_model2::live_capture();
++        const int width=m_screen->visible_area().width(),height=m_screen->visible_area().height();
++        capture.display(m_crtc_xoffset,m_crtc_yoffset,width,height);
++        {hotd_model2::NativeTimingScope blob_timing(hotd_model2::NativeSection::CaptureBlobs);
++        capture.bytes("texture0",&m_textureram0[0],m_textureram0.bytes());
++        capture.bytes("texture1",&m_textureram1[0],m_textureram1.bytes());
++        capture.bytes("palette",m_palram.get(),0x4000);
++        capture.bytes("colorxlat",m_colorxlat.get(),0xc000);
++        capture.bytes("luma",m_lumaram.get(),0x8000);
++        capture.bytes("gamma",m_gamma_table,sizeof(m_gamma_table));
++        }
++        auto frame=std::make_unique<hotd_model2::NativeFrame>(capture.take());
++        frame->complete=false;frame->raster_only=m_render_test_mode||hotd_model2::native_panel_requested();
++        {hotd_model2::NativeTimingScope raster_timing(hotd_model2::NativeSection::RasterCopies);hotd_model2::copy_pixels(frame->background,width,height,[&](int x,int y){return bitmap.pix(y,x);});}
++        // The infinite sky mirrors the original visible 496px strip. The host
++        // pads that strip to 512px to preserve exact shader sampling, so this
++        // second tile render is needed only for full-period diagnostics.
++        if(std::getenv("HOTD_MODEL2_CAPTURE_FULL_SKY_PERIOD") && !frame->raster_only && !frame->polygons.empty()) {
++            // System24's native 64x8 tile rows wrap at 512 pixels. Retain
++            // that full period rather than repeating a cropped 496px image.
++            frame->sky_width=512;frame->sky_height=height;
++            bitmap_rgb32 sky(512,height);sky.fill(m_palette->pen(0));
++            const rectangle sky_clip(0,511,0,height-1);
++            for(int layer=3;layer>=2;--layer)
++                m_tiles->draw_with_window_mask(screen,sky,sky_clip,layer<<1,0,TILEMAP_DRAW_OPAQUE,window_mask_override,true);
++            for(int layer=1;layer>=0;--layer)m_tiles->draw_with_window_mask(screen,sky,sky_clip,layer<<1,0,0,window_mask_override,true);
++            hotd_model2::copy_pixels(frame->sky,512,height,[&](int x,int y){return sky.pix(y,x);});
++        }
++        hotd_model2::live_raster()=std::move(frame);hotd_model2::live_pending()=false;
++    }
+ 	/* tell the rasterizer we're starting a frame */
+ 	if (m_render_test_mode == true)
+ 		draw_framebuffer(bitmap, cliprect);
+-	else
++	else if(!hotd_model2::vr_requested() || std::getenv("HOTD_MODEL2_CPU_RASTER") || std::getenv("HOTD_MODEL2_SCENE_DIR") || hotd_model2::native_panel_requested())
++        // The VR host replays owned polygons. Retain the software rasterizer
++        // for reference diagnostics; it does not participate in game logic.
+ 		render_polygons(bitmap, cliprect);
+ 
++    {hotd_model2::NativeTimingScope foreground_timing(hotd_model2::NativeSection::ForegroundTiles);
+ 	m_sys24_bitmap.fill(0, cliprect);
+ 
+ 	for (int layer = 3; layer >= 0; layer--)
+-		m_tiles->draw(screen, m_sys24_bitmap, cliprect, (layer<<1) | 1, 0, 0);
+-
+-	copybitmap_trans(bitmap, m_sys24_bitmap, 0, 0, 0, 0, cliprect, 0);
++		m_tiles->draw_with_window_mask(screen, m_sys24_bitmap, cliprect, (layer<<1) | 1, 0, 0, window_mask_override);
++
++	copybitmap_trans(bitmap, m_sys24_bitmap, 0, 0, 0, 0, cliprect, 0);    }
++
++    if(auto& frame=hotd_model2::live_raster();frame) {
++        {hotd_model2::NativeTimingScope raster_timing(hotd_model2::NativeSection::RasterCopies);hotd_model2::copy_pixels(frame->foreground,frame->width,frame->height,[&](int x,int y){return m_sys24_bitmap.pix(y,x);});}
++        {hotd_model2::NativeTimingScope raster_timing(hotd_model2::NativeSection::RasterCopies);hotd_model2::copy_pixels(frame->native,frame->width,frame->height,[&](int x,int y){return bitmap.pix(y,x);});}
++        frame->complete=true;
++        hotd_model2::shared_runtime().scene.store(hotd_model2::publish_live_frame(std::move(frame)));
++    }
++    if(!hotd_model2::trace_pending_raster().empty()) {
++        try {
++            const int width=m_screen->visible_area().width(),height=m_screen->visible_area().height();
++            hotd_model2::trace_raster("foreground",width,height,[&](int x,int y){return uint32_t(m_sys24_bitmap.pix(y,x));});
++            hotd_model2::trace_raster("native",width,height,[&](int x,int y){return uint32_t(bitmap.pix(y,x));});
++            hotd_model2::commit_trace_rasters();
++        } catch(const std::exception& error){osd_printf_error("HOTD_MODEL2 capture failed: %s\n",error.what());}
++        hotd_model2::trace_pending_raster().clear();
++    }
+ 
+ 	return 0;
+ }
+--- a/src/mame/sega/segaic24.cpp
++++ b/src/mame/sega/segaic24.cpp
+@@ -337,12 +337,12 @@
+ }
+ 
+ template<class BitmapClass>
+-void segas24_tile_device::draw_common(screen_device &screen, BitmapClass &bitmap, const rectangle &cliprect, int layer, int lpri, int flags)
++void segas24_tile_device::draw_common(screen_device &screen, BitmapClass &bitmap, const rectangle &cliprect, int layer, int lpri, int flags, bool full_period, const uint16_t *mask_override)
+ {
+ 	uint16_t hscr = tile_ram[0x5000+(layer >> 1)];
+ 	uint16_t vscr = tile_ram[0x5004+(layer >> 1)];
+ 	uint16_t ctrl = tile_ram[0x5004+((layer >> 1) & 2)];
+-	uint16_t *mask = tile_ram.get() + (layer & 4 ? 0x6800 : 0x6000);
++	const uint16_t *mask = mask_override && !(layer & 4) ? mask_override : tile_ram.get() + (layer & 4 ? 0x6800 : 0x6000);
+ 	uint16_t tpri = layer & 1;
+ 
+ 	lpri = 1 << lpri;
+@@ -458,6 +458,8 @@
+ 
+ 	} else {
+ 		int win = layer & 1;
++		const int draw_width = full_period ? 512 : 496;
++		const int draw_height = full_period ? std::min(512,bitmap.height()) : 384;
+ 
+ 		bitmap_ind16 &bm = tile_layer[layer]->pixmap();
+ 		bitmap_ind8 &tm = tile_layer[layer]->flagsmap();
+@@ -467,15 +469,15 @@
+ 			uint16_t *hscrtb = tile_ram.get() + 0x4000 + 0x200*layer;
+ 			vscr &= 0x1ff;
+ 
+-			for(y=0; y<384; y++) {
++			for(y=0; y<draw_height; y++) {
+ 				hscr = (-hscrtb[y]) & 0x1ff;
+-				if(hscr + 496 <= 512) {
++				if(hscr + draw_width <= 512) {
+ 					// Horizontal split unnecessary
+-					draw_rect(screen, bm, tm, bitmap, mask, tpri, lpri, flags, win, hscr, vscr,        0,        y,      496,      y+1);
++					draw_rect(screen, bm, tm, bitmap, mask, tpri, lpri, flags, win, hscr, vscr,        0,        y,      draw_width,      y+1);
+ 				} else {
+ 					// Horizontal split necessary
+ 					draw_rect(screen, bm, tm, bitmap, mask, tpri, lpri, flags, win, hscr, vscr,        0,        y, 512-hscr,      y+1);
+-					draw_rect(screen, bm, tm, bitmap, mask, tpri, lpri, flags, win,    0, vscr, 512-hscr,        y,      496,      y+1);
++					draw_rect(screen, bm, tm, bitmap, mask, tpri, lpri, flags, win,    0, vscr, 512-hscr,        y,      draw_width,      y+1);
+ 				}
+ 				vscr = (vscr + 1) & 0x1ff;
+ 			}
+@@ -483,29 +485,29 @@
+ 			hscr = (-hscr) & 0x1ff;
+ 			vscr = (+vscr) & 0x1ff;
+ 
+-			if(hscr + 496 <= 512) {
++			if(hscr + draw_width <= 512) {
+ 				// Horizontal split unnecessary
+-				if(vscr + 384 <= 512) {
++				if(vscr + draw_height <= 512) {
+ 					// Vertical split unnecessary
+-					draw_rect(screen, bm, tm, bitmap, mask, tpri, lpri, flags, win, hscr, vscr,        0,        0,      496,      384);
++					draw_rect(screen, bm, tm, bitmap, mask, tpri, lpri, flags, win, hscr, vscr,        0,        0,      draw_width,      draw_height);
+ 				} else {
+ 					// Vertical split necessary
+-					draw_rect(screen, bm, tm, bitmap, mask, tpri, lpri, flags, win, hscr, vscr,        0,        0,      496, 512-vscr);
+-					draw_rect(screen, bm, tm, bitmap, mask, tpri, lpri, flags, win, hscr,    0,        0, 512-vscr,      496,      384);
++					draw_rect(screen, bm, tm, bitmap, mask, tpri, lpri, flags, win, hscr, vscr,        0,        0,      draw_width, 512-vscr);
++					draw_rect(screen, bm, tm, bitmap, mask, tpri, lpri, flags, win, hscr,    0,        0, 512-vscr,      draw_width,      draw_height);
+ 
+ 				}
+ 			} else {
+ 				// Horizontal split necessary
+-				if(vscr + 384 <= 512) {
++				if(vscr + draw_height <= 512) {
+ 					// Vertical split unnecessary
+-					draw_rect(screen, bm, tm, bitmap, mask, tpri, lpri, flags, win, hscr, vscr,        0,        0, 512-hscr,      384);
+-					draw_rect(screen, bm, tm, bitmap, mask, tpri, lpri, flags, win,    0, vscr, 512-hscr,        0,      496,      384);
++					draw_rect(screen, bm, tm, bitmap, mask, tpri, lpri, flags, win, hscr, vscr,        0,        0, 512-hscr,      draw_height);
++					draw_rect(screen, bm, tm, bitmap, mask, tpri, lpri, flags, win,    0, vscr, 512-hscr,        0,      draw_width,      draw_height);
+ 				} else {
+ 					// Vertical split necessary
+ 					draw_rect(screen, bm, tm, bitmap, mask, tpri, lpri, flags, win, hscr, vscr,        0,        0, 512-hscr, 512-vscr);
+-					draw_rect(screen, bm, tm, bitmap, mask, tpri, lpri, flags, win,    0, vscr, 512-hscr,        0,      496, 512-vscr);
+-					draw_rect(screen, bm, tm, bitmap, mask, tpri, lpri, flags, win, hscr,    0,        0, 512-vscr, 512-hscr,      384);
+-					draw_rect(screen, bm, tm, bitmap, mask, tpri, lpri, flags, win,    0,    0, 512-hscr, 512-vscr,      496,      384);
++					draw_rect(screen, bm, tm, bitmap, mask, tpri, lpri, flags, win,    0, vscr, 512-hscr,        0,      draw_width, 512-vscr);
++					draw_rect(screen, bm, tm, bitmap, mask, tpri, lpri, flags, win, hscr,    0,        0, 512-vscr, 512-hscr,      draw_height);
++					draw_rect(screen, bm, tm, bitmap, mask, tpri, lpri, flags, win,    0,    0, 512-hscr, 512-vscr,      draw_width,      draw_height);
+ 				}
+ 			}
+ 		}
+@@ -517,6 +519,14 @@
+ 
+ void segas24_tile_device::draw(screen_device &screen, bitmap_rgb32 &bitmap, const rectangle &cliprect, int layer, int lpri, int flags)
+ { draw_common(screen, bitmap, cliprect, layer, lpri, flags); }
++
++void segas24_tile_device::draw_full_period(screen_device &screen, bitmap_rgb32 &bitmap, const rectangle &cliprect, int layer, int lpri, int flags)
++{ draw_common(screen, bitmap, cliprect, layer, lpri, flags, true); }
++
++// A caller may supply a render-only primary-pair window mask. Other pairs
++// keep their native masks, and the emulated tile RAM is never modified.
++void segas24_tile_device::draw_with_window_mask(screen_device &screen, bitmap_rgb32 &bitmap, const rectangle &cliprect, int layer, int lpri, int flags, const uint16_t *mask_override, bool full_period)
++{ draw_common(screen, bitmap, cliprect, layer, lpri, flags, full_period, mask_override); }
+ 
+ uint16_t segas24_tile_device::tile_r(offs_t offset)
+ {
+--- a/src/mame/sega/segaic24.h
++++ b/src/mame/sega/segaic24.h
+@@ -38,6 +38,8 @@
+ 
+ 	void draw(screen_device &screen, bitmap_ind16 &bitmap, const rectangle &cliprect, int layer, int pri, int flags);
+ 	void draw(screen_device &screen, bitmap_rgb32 &bitmap, const rectangle &cliprect, int layer, int pri, int flags);
++	void draw_full_period(screen_device &screen, bitmap_rgb32 &bitmap, const rectangle &cliprect, int layer, int pri, int flags);
++	void draw_with_window_mask(screen_device &screen, bitmap_rgb32 &bitmap, const rectangle &cliprect, int layer, int pri, int flags, const uint16_t *mask_override, bool full_period = false);
+ 
+ 	auto xhout_write_callback() { return m_xhout_write_cb.bind(); }
+ 	auto xvout_write_callback() { return m_xvout_write_cb.bind(); }
+@@ -70,7 +72,7 @@
+ 					uint16_t tpri, uint8_t lpri, int flags, int win, int sx, int sy, int xx1, int yy1, int xx2, int yy2);
+ 
+ 	template<class BitmapClass>
+-	void draw_common(screen_device &screen, BitmapClass &bitmap, const rectangle &cliprect, int layer, int pri, int flags);
++	void draw_common(screen_device &screen, BitmapClass &bitmap, const rectangle &cliprect, int layer, int pri, int flags, bool full_period = false, const uint16_t *mask_override = nullptr);
+ 
+ 	devcb_write16 m_xhout_write_cb;
+ 	devcb_write16 m_xvout_write_cb;
+--- a/src/osd/modules/lib/osdobj_common.cpp
++++ b/src/osd/modules/lib/osdobj_common.cpp
+@@ -25,6 +25,7 @@
+ #include "watchdog.h"
+ 
+ #include "emu.h"
++#include "hotd_model2/host_bridge.h"
+ #include "../frontend/mame/ui/menuitem.h"
+ 
+ #include <iostream>
+@@ -463,6 +464,7 @@
+ 
+ void osd_common_t::update(bool skip_redraw)
+ {
++    hotd_model2::poll_host(machine());
+ 	//
+ 	// This method is called periodically to flush video updates to the
+ 	// screen, and also to allow the OSD a chance to update other systems
+@@ -794,6 +796,7 @@
+ 
+ void osd_common_t::osd_exit()
+ {
++    hotd_model2::stop_host();
+ 	// destroy the renderers before shutting down their parent module
+ 	for (auto it = window_list().rbegin(); window_list().rend() != it; ++it)
+ 		(*it)->renderer_reset();
+--- a/src/osd/modules/sound/sdl_sound.cpp
++++ b/src/osd/modules/sound/sdl_sound.cpp
+@@ -22,6 +22,7 @@
+ 
+ #include <algorithm>
+ #include <cmath>
++#include <cstdlib>
+ #include <fstream>
+ #include <memory>
+ #include <map>
+@@ -66,7 +67,12 @@
+ 		uint32_t m_id;
+ 		SDL_AudioDeviceID m_sdl_id;
+ 		abuffer m_buffer;
+-		stream_info(uint32_t id, uint8_t channels, uint32_t rate) : m_id(id), m_sdl_id(0), m_buffer(channels, rate) {}
++		bool m_diagnostics;
++		uint32_t m_rate;
++		uint64_t m_generated = 0, m_consumed = 0, m_missing = 0;
++		uint64_t m_report_ms, m_report_generated = 0, m_report_consumed = 0, m_report_missing = 0;
++		stream_info(uint32_t id, uint8_t channels, uint32_t rate) : m_id(id), m_sdl_id(0), m_buffer(channels, rate),
++			m_diagnostics(std::getenv("HOTD_MODEL2_VR") != nullptr), m_rate(rate), m_report_ms(SDL_GetTicks64()) {}
+ 	};
+ 
+ 	std::vector<device_info> m_devices;
+@@ -236,14 +242,44 @@
+ 	if(si == m_streams.end())
+ 		return;
+ 	stream_info *stream = si->second.get();
++	const uint64_t now = stream->m_diagnostics ? SDL_GetTicks64() : 0;
++	const bool report = stream->m_diagnostics && now - stream->m_report_ms >= 5000;
++	uint64_t generated = 0, consumed = 0, missing = 0;
++	uint32_t queued = 0;
+ 	SDL_LockAudioDevice(stream->m_sdl_id);
+ 	stream->m_buffer.push(buffer, samples_this_frame);
++	if (stream->m_diagnostics) stream->m_generated += samples_this_frame;
++	if (report) {
++		generated = stream->m_generated; consumed = stream->m_consumed; missing = stream->m_missing;
++		queued = stream->m_buffer.available();
++	}
+ 	SDL_UnlockAudioDevice(stream->m_sdl_id);
++	if (report) {
++		double seconds = (now - stream->m_report_ms) / 1000.0;
++		osd_printf_info("HOTD_MODEL2 audio: generated %.1f Hz, consumed %.1f Hz, missing %llu frames, queued %u, rate %u\n",
++			(generated-stream->m_report_generated)/seconds, (consumed-stream->m_report_consumed)/seconds,
++			static_cast<unsigned long long>(missing-stream->m_report_missing), queued, stream->m_rate);
++		if(const char *path=std::getenv("HOTD_MODEL2_XR_LOG")) {
++			std::ofstream out(std::string(path)+".audio",std::ios::app);
++			out<<"Audio generated "<<(generated-stream->m_report_generated)/seconds
++			   <<" Hz, consumed "<<(consumed-stream->m_report_consumed)/seconds
++			   <<" Hz, missing "<<(missing-stream->m_report_missing)
++			   <<" frames, queued "<<queued<<", rate "<<stream->m_rate<<'\n';
++		}
++		stream->m_report_ms = now; stream->m_report_generated = generated;
++		stream->m_report_consumed = consumed; stream->m_report_missing = missing;
++	}
+ }
+ 
+ void sound_sdl::sink_callback(void *userdata, uint8_t *data, int len)
+ {
+ 	stream_info *stream = reinterpret_cast<stream_info *>(userdata);
++	if (stream->m_diagnostics) {
++		uint32_t needed = len / 2 / stream->m_buffer.channels();
++		uint32_t available = stream->m_buffer.available();
++		stream->m_consumed += needed;
++		if (needed > available) stream->m_missing += needed - available;
++	}
+ 	stream->m_buffer.get((int16_t *)data, len / 2 / stream->m_buffer.channels());
+ }
+ 
+--- a/src/osd/modules/sound/wasapi_sound.cpp
++++ b/src/osd/modules/sound/wasapi_sound.cpp
+@@ -11,6 +11,12 @@
+ #include "modules/osdmodule.h"
+ 
+ #if defined(OSD_WINDOWS) | defined(SDLMAME_WIN32)
++
++// MinGW's UUID import library omits these WASAPI property keys on some releases.
++// Instantiate the SDK's select-any GUID definitions in this translation unit.
++#if defined(__MINGW32__)
++#include <initguid.h>
++#endif
+ 
+ // local headers
+ #include "mmdevice_helpers.h"

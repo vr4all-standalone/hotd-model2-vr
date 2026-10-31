@@ -1,0 +1,13 @@
+--- a/src/mame/sega/model2.cpp
++++ b/src/mame/sega/model2.cpp
+@@ -170,7 +170,9 @@
+                     const u32 ip=m_maincpu->state_int(I960_IP);
+                     if (ip!=0x5c40 || mask!=0xffffffffU || !(data&2)) return;
+                     const auto state=hotd_model2::read_game_state([&](uint32_t a){return m_maincpu->space(AS_PROGRAM).read_dword(a);});
+-                    hotd_model2::native_shot_events().observe(state,ip,offset,data,mask);
++                    const auto input=hotd_model2::cabinet_input();
++                    const unsigned player=offset==0x51ec08?0:1;
++                    hotd_model2::native_shot_events().observe(state,ip,offset,data,mask,input.feedback_epoch[player]);
+                 });
+         }
+     }

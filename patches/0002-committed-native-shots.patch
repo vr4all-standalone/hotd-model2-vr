@@ -1,0 +1,24 @@
+--- a/src/mame/sega/model2.cpp
++++ b/src/mame/sega/model2.cpp
+@@ -159,6 +159,21 @@
+ 
+ void model2_state::machine_start()
+ {
++    // Read-only accepted-shot observer for the verified original HOTD program.
++    // Taps belong to the machine address space; their callbacks never alter data.
++    if (hotd_model2::vr_requested() && !strcmp(machine().system().name, "hotdo")) {
++        hotd_model2::native_shot_events().attach();
++        for (unsigned player=0;player<2;++player) {
++            const u32 address=0x51ec08+player*0xcc;
++            m_maincpu->space(AS_PROGRAM).install_write_tap(address,address+3,"hotd-committed-shot",
++                [this](offs_t offset,u32 &data,u32 mask) {
++                    const u32 ip=m_maincpu->state_int(I960_IP);
++                    if (ip!=0x5c40 || mask!=0xffffffffU || !(data&2)) return;
++                    const auto state=hotd_model2::read_game_state([&](uint32_t a){return m_maincpu->space(AS_PROGRAM).read_dword(a);});
++                    hotd_model2::native_shot_events().observe(state,ip,offset,data,mask);
++                });
++        }
++    }
+ 	// initialize custom debugger pool, @see machine/model2.cpp
+ 	debug_init();
+ 

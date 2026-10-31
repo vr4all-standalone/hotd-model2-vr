@@ -1,0 +1,25 @@
+--- a/src/mame/sega/model2_v.cpp
++++ b/src/mame/sega/model2_v.cpp
+@@ -91,6 +91,7 @@
+ #include "emu.h"
+ #include "hotd_model2/native_timing.h"
+ #include "hotd_model2/native_clip.h"
++#include "hotd_model2/native_flash.h"
+ #include "model2.h"
+ #include "model2rd.ipp"
+ #include "../../lib/hotd_model2/model2_trace.h"
+@@ -2439,7 +2440,13 @@
+ u32 model2_state::screen_update(screen_device &screen, bitmap_rgb32 &bitmap, const rectangle &cliprect)
+ {
+     hotd_model2::NativeTimingScope native_timing(hotd_model2::NativeSection::ScreenUpdate);
+-    const uint16_t* window_mask_override=nullptr; // No HOTD native mask override verified.
++    // Suppress only original hotdo's verified cabinet sensor strobe in VR.
++    // Native tile RAM, gun-read cooldown and shot/reload input remain intact.
++    // This local decision is recomputed for every draw, including fades/service.
++    const uint16_t* window_mask_override=hotd_model2::native_gun_window_mask(
++        hotd_model2::vr_requested(),std::string_view(machine().system().name),
++        std::getenv("HOTD_MODEL2_KEEP_GUN_STROBE")!=nullptr,
++        [&](uint32_t address){return m_maincpu->space(AS_PROGRAM).read_dword(address);});
+ 	// if the scroll color table was written to, we need to refresh the palette
+ 	if (m_palette_dirty)
+ 	{
