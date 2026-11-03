@@ -41,7 +41,7 @@ int main(){
     assert(input.hand[0]==1&&input.hand[1]==0&&input.guns[0].trigger&&input.guns[1].trigger);
     s.gun=1;s.gun_angle=19;s.panel_distance=2.4;s.haptics=.35;s.reload=ReloadMode::Button;
     std::stringstream saved;write_settings(saved,s);const auto restored=read_settings(saved);
-    assert(restored.gun==1&&restored.p1_hand==1&&restored.gun_angle==19&&restored.panel_distance==2.4f&&restored.haptics==.35f&&restored.reload==ReloadMode::Button);
+    assert(restored.gun==1&&restored.p1_hand==1&&restored.gun_angle==19&&restored.panel_distance==2.4f&&restored.haptics==.35f&&restored.reload==ReloadMode::ShootOutside);
     std::stringstream malicious("version=6\ngun=8\nwider_view=1\ngun_angle_zero_version=1\ngun_angle=nan\np1_hand=9\nhaptics=2\n");
     const auto clean=read_settings(malicious);assert(clean.gun==AutoOriginalGun&&!clean.wider_view&&clean.p1_hand==0&&clean.gun_angle==0&&clean.haptics==.65f);
     InputPolicy two_credit;GameState title;title.valid=title.ready=true;title.start_cost=2;

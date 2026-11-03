@@ -9,12 +9,23 @@
 ![Quest 3 / 3S and Windows OpenXR](https://img.shields.io/badge/Platforms-Quest_3_%2F_3S_%C2%B7_PC_VR_OpenXR-blue?style=for-the-badge)
 ![Original game required](https://img.shields.io/badge/Your_Game-HOTD_original_revision-orange?style=for-the-badge)
 
-**[Download the Quest APK](https://github.com/vr4all-standalone/hotd-model2-vr/releases/tag/v0.1.7-beta)** · **[Download the PCVR launcher hotfix](https://github.com/vr4all-standalone/hotd-model2-vr/releases/tag/v0.1.7-pcvr.1)**
+**[Download Quest, Windows OpenXR, source and checksums](https://github.com/vr4all-standalone/hotd-model2-vr/releases/tag/v0.1.8-beta)**
 
 **[🌐 VR4ALL — Standalone VR Mod Installer](https://github.com/vr4all-standalone/vr4all-standalone)**  
 **[☕ Donate to VR4ALL](https://ko-fi.com/vr4all)**
 
 </div>
+
+## v0.1.8-beta
+
+- Gun, World, System and In-game settings tabs with Advanced pages. In-game opens native Service.
+- One controller owns the settings pointer. A contact dot marks its hit. Laser offers Off, Normal, 5x and 10x.
+- Either hand can Start solo play. The free trigger can take over after releasing the active trigger. Start on the free hand joins P2, then the saved layout takes over.
+- How to Play uses Start and Fire, with an inward trigger callout.
+- Crosshair defaults are 22% minimum, 60% maximum and 6.7 m shrink distance. The reload button works with both Shoot off-screen and Point off-screen.
+
+Requires your own original arcade game files. Includes standalone Quest and Windows OpenXR builds.
+
 
 ---
 

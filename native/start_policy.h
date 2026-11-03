@@ -18,7 +18,7 @@ class NativeStartPolicy {
         bool operator==(const Accounting&)const=default;
     };
     struct Pending {
-        bool active{},waiting_coin{},delivering{},joined_before{},acknowledged{};
+        bool active{},waiting_coin{},delivering{},joined_before{},acknowledged{},released{};
         int hand{-1};unsigned sent{};uint32_t native_before{};
         double began{},coin_at{-100},next_coin{},started{};
         uint16_t coin_before{};Accounting accounting;
@@ -50,8 +50,9 @@ public:
             auto& p=pending_[i];if(!p.active||!p.delivering)continue;
             p.acknowledged|=s.players[i].joined()&&(!p.joined_before||(p.native_before==4&&s.players[i].native_state!=4));
             const double elapsed=now-p.started;
-            if(elapsed<StartHigh||held[p.hand])out.start_mask|=uint8_t(1u<<i);
-            if(elapsed>=StartHigh&&!held[p.hand]&&(p.acknowledged||elapsed>=StartAckTimeout))p={};
+            p.released|=!held[p.hand];
+            if(elapsed<StartHigh||!p.released)out.start_mask|=uint8_t(1u<<i);
+            if(elapsed>=StartHigh&&p.released&&(p.acknowledged||elapsed>=StartAckTimeout))p={};
             if(p.active&&!p.acknowledged)reserved=true;
         }
         if(reserved)return out;

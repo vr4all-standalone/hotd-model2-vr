@@ -3,7 +3,28 @@
 #include <cassert>
 #include <iostream>
 using namespace hotd_model2;
-int main(){for(int layout:{0,1}){
+int main(){
+for(int first:{0,1}){
+    Settings settings;settings.p1_hand=1-first;
+    GameState s;s.valid=s.ready=true;s.credits={5,5};
+    Hands h;for(auto& hand:h){hand.tracked=true;hand.aim={.5,.5,true,true};}
+    InputPolicy policy;policy.update(0,h,s,settings,true,false);
+    h[first].start=true;
+    auto out=policy.update(.1,h,s,settings,true,false);
+    assert(out.hand[0]==first&&out.start_mask==1);
+    s.players[0].state=1;s.players[0].native_state=5;s.players[0].health=3;
+    h[first].start=false;policy.update(.2,h,s,settings,true,false);
+    h[1-first].trigger=true;
+    out=policy.update(.3,h,s,settings,true,false);
+    assert(out.hand[0]==1-first&&out.guns[0].trigger);
+    h[first].start=true;
+    out=policy.update(.4,h,s,settings,true,false);
+    assert(out.start_mask==2);
+    s.players[1]=s.players[0];
+    out=policy.update(.5,h,s,settings,true,false);
+    assert(out.hand[0]==settings.p1_hand&&out.hand[1]==1-settings.p1_hand);
+}
+for(int layout:{0,1}){
     Settings settings;settings.p1_hand=layout;InputPolicy policy;Hands h;
     for(auto& x:h){x.tracked=true;x.aim={.5,.5,true,true};}
     GameState s;s.valid=s.ready=s.playing=true;s.credits={5,5};

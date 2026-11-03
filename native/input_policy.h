@@ -14,9 +14,10 @@ enum class ReloadMode { Button, ShootOutside, PointOutside };
 enum class BackgroundMode {Original,Depth3D};
 inline constexpr std::array<float,4> HapticLevels{0,.35f,.65f,1};
 inline int haptic_level(float value){int best=0;for(int i=1;i<4;i++)if(std::abs(value-HapticLevels[i])<std::abs(value-HapticLevels[best]))best=i;return best;}
+inline constexpr float DefaultCrosshairMaxSize = .60f;
 struct Settings {
     ReticleMode reticle_mode{ReticleMode::Custom};
-    float reticle_min_size{.22f},reticle_max_size{.75f},reticle_shrink_distance{6.7f};
+    float reticle_min_size{.22f},reticle_max_size{DefaultCrosshairMaxSize},reticle_shrink_distance{6.7f};
     int p1_hand{0}; ReloadMode reload{ReloadMode::ShootOutside};
     float world_scale{0.10f},panel_distance{1.8f},hud_size{1.f},gun_angle{},gun_scale{1},haptics{.65f};
     float view_size{1.f}; // Camera framing only; tracked poses and gun/2D HUD sizes stay physical.
@@ -25,6 +26,7 @@ struct Settings {
     bool wider_view{false};
     bool game_zoom{false};
     float view_fov{110};
+    int laser_width{1}; // Normal, 5x, 10x
 };
 struct CabinetGun { uint16_t x{32768},y{32768};bool trigger{},pump{}; };
 struct CabinetInput {
@@ -35,7 +37,8 @@ struct CabinetInput {
     uint8_t coin_mask{},start_mask{};
 };
 constexpr int start_player_for_hand(int hand,int joined,int p1_hand,int solo_hand){
-    return joined==3?(hand==p1_hand?0:1):joined==2?(hand==solo_hand?1:0):(hand==1?0:1);
+    const int active=joined==2?1:0;
+    return joined==0?0:joined==3?(hand==p1_hand?0:1):(hand==solo_hand?active:1-active);
 }
 // Runs at native vblank, so a held-trigger handoff gets a complete release
 // frame even when the independently paced XR thread updates faster than MAME.
@@ -104,6 +107,10 @@ public:
             if(!was_pulled&&hands[other].tracked&&(!hands[solo_hand_].tracked||
                 (hands[other].trigger&&!pulled&&!blocked_[other])))solo_hand_=other;
         }
+        if(joined==0&&enabled&&was_enabled_&&p1hand==previous_layout_){
+            const auto first=[&](int h){return hands[h].tracked&&!start_waiting_[h]&&hands[h].start&&!previous_[h].start;};
+            if(first(0)||first(1))solo_hand_=first(0)&&first(1)?p1hand:first(0)?0:1;
+        }
         for(int h=0;h<2;h++) {
             const auto& in=hands[h];
             // Sample physical Start even while the game cannot receive it.
@@ -111,7 +118,7 @@ public:
             const bool start_ready=enabled&&native_start_ready_&&in.tracked;
             if(!start_ready){start_waiting_[h]=true;starts_.cancel_hand(h);}
             else if(!in.start)start_waiting_[h]=false;
-            if(start_ready&&!start_waiting_[h]&&in.start&&!previous_[h].start) {
+            if(start_ready&&!start_waiting_[h]&&in.start&&!previous_[h].start&&(joined||h==solo_hand_)) {
                 const int owner=start_player_for_hand(h,joined,p1hand,solo_hand_);
                 // Solo P2 Start is a fresh native join request, never a queued
                 // boot press. The native acknowledgement alone changes layout.

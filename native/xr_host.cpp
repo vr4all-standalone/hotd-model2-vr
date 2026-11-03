@@ -328,7 +328,10 @@ struct Host {
             }
             XrActionStateGetInfo sg{XR_TYPE_ACTION_STATE_GET_INFO};sg.action=stick;sg.subactionPath=hands[i];XrActionStateVector2f stick_state{XR_TYPE_ACTION_STATE_VECTOR2F};check(xrGetActionStateVector2f(session,&sg,&stick_state),"Stick state");
             if(stick_state.isActive&&std::abs(stick_state.currentState.x)+std::abs(stick_state.currentState.y)>std::abs(display.stick.x)+std::abs(display.stick.y))display.stick={stick_state.currentState.x,stick_state.currentState.y};
-            if(stick_state.isActive)extras.stick[i]={stick_state.currentState.x,stick_state.currentState.y};
+            if(stick_state.isActive){
+                extras.stick[i]={stick_state.currentState.x,stick_state.currentState.y};
+                display.sticks[i]={stick_state.currentState.x,stick_state.currentState.y};
+            }
             extras.click[i]=button(click,i);
         }
         bool focused=session_state==XR_SESSION_STATE_FOCUSED&&!launch_splash.active();
@@ -337,7 +340,11 @@ struct Host {
         if(service_click.edge(extras.click[1],focused&&ui.service()&&!ui.open())){ui.toggle_service_guns();shared.release_inputs();}
         auto shortcut=shortcuts.update(now,extras,inputs,settings,focused&&!ui.open()&&!ui.service()&&!display.toggle);
         if(shortcut.recenter)origin_set=false;
-        if(shortcut.laser)settings.laser=!settings.laser;
+        if(shortcut.laser){
+            const bool enabled=!(settings.laser||settings.reticle_mode==ReticleMode::Custom);
+            settings.laser=enabled;
+            settings.reticle_mode=enabled?ReticleMode::Custom:ReticleMode::None;
+        }
         if(shortcut.save||shortcut.laser){const char* file=std::getenv("HOTD_MODEL2_SETTINGS");std::ofstream output(file?file:"hotd_model2-settings.ini");if(output)write_settings(output,settings);}
         // Aim and drawing use the same game-camera framing; tracked poses and
         // native 2D panels keep their original physical sizes.

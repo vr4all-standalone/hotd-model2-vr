@@ -22,13 +22,14 @@ inline Settings read_settings(std::istream& input,bool* angle_migrated=nullptr,b
         if(key=="gun_angle_zero_version"&&integer(1,2147483647))angle_zero_version=true;
         else if(key=="view_defaults_version"&&integer(4,2147483647))view_defaults_version=true;
         else if(key=="p1_hand"&&integer(0,1))out.p1_hand=int(number);
-        else if(key=="reload"&&integer(0,2))out.reload=ReloadMode(int(number));
+        else if(key=="reload"&&integer(0,2))out.reload=number==2?ReloadMode::PointOutside:ReloadMode::ShootOutside;
         else if(key=="gun"&&integer(0,8)) {
             const int choice=int(number);
             if(three_gun_version) {if(selectable_gun_choice(choice))out.gun=choice;}
             else out.gun=choice==1?1:choice==0&&original_gun_version?0:AutoOriginalGun;
         }
         else if(key=="laser"&&integer(0,1))out.laser=number!=0;
+        else if(key=="laser_width"&&integer(1,3))out.laser_width=number;
         else if(key=="reticle_mode"&&integer(1,2))out.reticle_mode=reticle_mode_value(int(number));
         else if(key=="reticle_min_size"&&number>=.05&&number<=1)out.reticle_min_size=float(number);
         else if(key=="reticle_max_size"&&number>=.25&&number<=3)out.reticle_max_size=float(number);
@@ -58,7 +59,7 @@ inline Settings read_settings(std::istream& input,bool* angle_migrated=nullptr,b
 }
 inline void write_settings(std::ostream& out,const Settings& s) {
     out<<"version=7\ngun_angle_zero_version=1\nview_defaults_version=4\np1_hand="<<s.p1_hand<<"\nreload="<<int(s.reload)<<"\ngun="<<(selectable_gun_choice(s.gun)?s.gun:AutoOriginalGun)<<"\nlaser="<<s.laser
-       <<"\nview_fov="<<s.view_fov<<"\nwider_view="<<s.wider_view<<"\nworld_scale="<<s.world_scale<<"\nview_size="<<s.view_size<<"\npanel_distance="<<s.panel_distance<<"\nhud_size="<<s.hud_size<<"\ngun_angle="<<s.gun_angle<<"\ngun_scale="<<s.gun_scale<<"\nreticle_mode="<<int(reticle_mode_value(int(s.reticle_mode)))<<"\nreticle_min_size="<<s.reticle_min_size<<"\nreticle_max_size="<<s.reticle_max_size<<"\nreticle_shrink_distance="<<s.reticle_shrink_distance<<"\nhaptics="<<s.haptics<<"\nbackground="<<int(s.background)<<'\n';
+       <<"\nlaser_width="<<s.laser_width<<"\nview_fov="<<s.view_fov<<"\nwider_view="<<s.wider_view<<"\nworld_scale="<<s.world_scale<<"\nview_size="<<s.view_size<<"\npanel_distance="<<s.panel_distance<<"\nhud_size="<<s.hud_size<<"\ngun_angle="<<s.gun_angle<<"\ngun_scale="<<s.gun_scale<<"\nreticle_mode="<<int(reticle_mode_value(int(s.reticle_mode)))<<"\nreticle_min_size="<<s.reticle_min_size<<"\nreticle_max_size="<<s.reticle_max_size<<"\nreticle_shrink_distance="<<s.reticle_shrink_distance<<"\nhaptics="<<s.haptics<<"\nbackground="<<int(s.background)<<'\n';
 }
 // Persist migration at the first real settings load, without a Settings ABI
 // field or rewriting unrelated/unknown preferences and calibration entries.

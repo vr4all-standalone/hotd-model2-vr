@@ -4,11 +4,11 @@
 #include <algorithm>
 #include <cmath>
 namespace hotd_model2 {
-struct ReticleSize {float minimum_ratio{.22f},shrink_distance{6.7f},maximum_ratio{.75f};};
-inline ReticleSize reticle_size_settings(float minimum_ratio,float shrink_distance,float maximum_ratio=.75f){
+struct ReticleSize {float minimum_ratio{.22f},shrink_distance{6.7f},maximum_ratio{DefaultCrosshairMaxSize};};
+inline ReticleSize reticle_size_settings(float minimum_ratio,float shrink_distance,float maximum_ratio=DefaultCrosshairMaxSize){
     return {std::isfinite(minimum_ratio)?std::clamp(minimum_ratio,.05f,1.f):.22f,
         std::isfinite(shrink_distance)?std::clamp(shrink_distance,.2f,20.f):6.7f,
-        std::isfinite(maximum_ratio)?std::clamp(maximum_ratio,.25f,3.f):.75f};
+        std::isfinite(maximum_ratio)?std::clamp(maximum_ratio,.25f,3.f):DefaultCrosshairMaxSize};
 }
 inline ReticleSize reticle_size_for_mode(const Settings& s){
     return reticle_size_settings(s.reticle_min_size,s.reticle_shrink_distance,s.reticle_max_size);
